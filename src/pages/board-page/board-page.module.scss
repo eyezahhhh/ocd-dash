@@ -60,6 +60,15 @@
 	opacity: 0.45;
 }
 
+.dropGhost {
+	height: 40px;
+	border: 2px dashed var(--border-strong);
+	border-radius: calc(var(--radius) - 2px);
+	background: var(--bg);
+	opacity: 0.7;
+	pointer-events: none;
+}
+
 .blocked {
 	opacity: 0.5;
 	filter: grayscale(1);

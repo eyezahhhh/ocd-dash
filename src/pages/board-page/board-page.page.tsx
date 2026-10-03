@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
 	BackdashError,
@@ -30,8 +30,10 @@ function TaskCard({
 	taskNameById,
 	taskColIndexById,
 	isDragSource,
+	drag,
 	onDragStartTask,
 	onDropOnTask,
+	onTaskDragOver,
 	onDragEnd,
 	onEdit,
 }: {
@@ -42,8 +44,10 @@ function TaskCard({
 	taskNameById: Map<number, string>;
 	taskColIndexById: Map<number, number>;
 	isDragSource: boolean;
+	drag: DragState;
 	onDragStartTask: (task: Task, columnId: number) => void;
 	onDropOnTask: (taskId: number, columnId: number) => void;
+	onTaskDragOver: (task: Task, columnId: number) => void;
 	onDragEnd: () => void;
 	onEdit: (task: Task) => void;
 }) {
@@ -104,6 +108,7 @@ function TaskCard({
 			onDragOver={(e) => {
 				e.preventDefault();
 				e.stopPropagation();
+				if (drag?.kind === "task") onTaskDragOver(task, column.id);
 			}}
 			onDrop={(e) => {
 				e.preventDefault();
@@ -246,10 +251,13 @@ function ColumnCard({
 	taskNameById,
 	taskColIndexById,
 	drag,
+	dropTarget,
 	onColumnDragStart,
 	onColumnDrop,
 	onTaskDragStart,
 	onDropOnTask,
+	onTaskDragOver,
+	onColumnDragOver,
 	onDragEnd,
 	onEdit,
 }: {
@@ -259,10 +267,13 @@ function ColumnCard({
 	taskNameById: Map<number, string>;
 	taskColIndexById: Map<number, number>;
 	drag: DragState;
+	dropTarget: { columnId: number; position: number | null } | null;
 	onColumnDragStart: (id: number) => void;
 	onColumnDrop: (id: number) => void;
 	onTaskDragStart: (task: Task, columnId: number) => void;
 	onDropOnTask: (taskId: number, columnId: number) => void;
+	onTaskDragOver: (task: Task, columnId: number) => void;
+	onColumnDragOver: (columnId: number) => void;
 	onDragEnd: () => void;
 	onEdit: (task: Task) => void;
 }) {
@@ -271,6 +282,17 @@ function ColumnCard({
 	const [title, setTitle] = useState("");
 	const [taskName, setTaskName] = useState("");
 	const [confirming, setConfirming] = useState(false);
+
+	// Insertion index for the drag ghost in this column, or null when this
+	// column is not the drop target. `dropTarget.position === null` (or no task
+	// at/after it) means append to the end.
+	const ghostIndex = (() => {
+		if (drag?.kind !== "task" || dropTarget?.columnId !== column.id) return null;
+		const pos = dropTarget.position;
+		if (pos === null) return column.tasks.length;
+		const idx = column.tasks.findIndex((t) => t.position >= pos);
+		return idx === -1 ? column.tasks.length : idx;
+	})();
 
 	function commitRename() {
 		setRenaming(false);
@@ -304,7 +326,10 @@ function ColumnCard({
 					onColumnDragStart(column.id);
 				}}
 				onDragEnd={onDragEnd}
-				onDragOver={(e) => e.preventDefault()}
+				onDragOver={(e) => {
+					e.preventDefault();
+					if (drag?.kind === "task") onColumnDragOver(column.id);
+				}}
 				onDrop={(e) => {
 					e.preventDefault();
 					onColumnDrop(column.id);
@@ -368,22 +393,32 @@ function ColumnCard({
 				</button>
 
 				<div className={styles.tasks}>
-					{column.tasks.map((task) => (
-						<TaskCard
-							key={task.id}
-							task={task}
-							column={column}
-							colIndex={colIndex}
-							boardId={boardId}
-							taskNameById={taskNameById}
-							taskColIndexById={taskColIndexById}
-							isDragSource={drag?.kind === "task" && drag.id === task.id}
-							onDragStartTask={onTaskDragStart}
-							onDropOnTask={onDropOnTask}
-							onDragEnd={onDragEnd}
-							onEdit={onEdit}
-						/>
+					{column.tasks.map((task, index) => (
+						<Fragment key={task.id}>
+							{ghostIndex === index && (
+								<div className={styles.dropGhost} data-drop-ghost aria-hidden="true" />
+							)}
+							<TaskCard
+								key={task.id}
+								task={task}
+								column={column}
+								colIndex={colIndex}
+								boardId={boardId}
+								taskNameById={taskNameById}
+								taskColIndexById={taskColIndexById}
+								isDragSource={drag?.kind === "task" && drag.id === task.id}
+								drag={drag}
+								onDragStartTask={onTaskDragStart}
+								onDropOnTask={onDropOnTask}
+								onTaskDragOver={onTaskDragOver}
+								onDragEnd={onDragEnd}
+								onEdit={onEdit}
+							/>
+						</Fragment>
 					))}
+					{ghostIndex === column.tasks.length && (
+						<div className={styles.dropGhost} data-drop-ghost aria-hidden="true" />
+					)}
 					{column.tasks.length === 0 && <div className={styles.empty}>No tasks</div>}
 				</div>
 
@@ -422,6 +457,7 @@ export function BoardPage() {
 	const [missingId, setMissingId] = useState<string | null>(null);
 	const [name, setName] = useState("");
 	const [drag, setDrag] = useState<DragState>(null);
+	const [dropTarget, setDropTarget] = useState<{ columnId: number; position: number | null } | null>(null);
 	const [confirming, setConfirming] = useState(false);
 	const [editing, setEditing] = useState<{ columnId: number; taskId: number } | null>(null);
 	const [tagsOpen, setTagsOpen] = useState(false);
@@ -482,6 +518,7 @@ export function BoardPage() {
 	function handleTaskDrop(target: { columnId: number; position?: number } | null) {
 		if (drag?.kind !== "task" || !board) {
 			setDrag(null);
+			setDropTarget(null);
 			return;
 		}
 		// Dropping outside a column is a no-op: the task stays where it was.
@@ -492,6 +529,17 @@ export function BoardPage() {
 			}).catch(() => undefined);
 		}
 		setDrag(null);
+		setDropTarget(null);
+	}
+
+	// Hover reporting for the drag ghost: hovering a specific task targets the
+	// slot just before it; hovering the column lane targets the end of the column.
+	function onTaskDragOver(task: Task, columnId: number) {
+		setDropTarget({ columnId, position: task.position });
+	}
+
+	function onColumnDragOver(columnId: number) {
+		setDropTarget({ columnId, position: null });
 	}
 
 	function onColumnDrop(columnId: number) {
@@ -600,11 +648,17 @@ export function BoardPage() {
 							taskNameById={taskNameById}
 							taskColIndexById={taskColIndexById}
 							drag={drag}
+							dropTarget={dropTarget}
 							onColumnDragStart={onColumnDragStart}
 							onColumnDrop={onColumnDrop}
 							onTaskDragStart={onTaskDragStart}
 							onDropOnTask={onDropOnTask}
-							onDragEnd={() => setDrag(null)}
+							onTaskDragOver={onTaskDragOver}
+							onColumnDragOver={onColumnDragOver}
+							onDragEnd={() => {
+								setDrag(null);
+								setDropTarget(null);
+							}}
 							onEdit={(task) => setEditing({ columnId: task.columnId, taskId: task.id })}
 						/>
 					))}

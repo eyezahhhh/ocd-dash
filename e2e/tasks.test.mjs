@@ -271,6 +271,42 @@ export async function run() {
 			JSON.stringify(tasks),
 		);
 
+		// 6b. Drag ghost / drop indicator: while dragging a task, a ghost
+		//     placeholder marks the exact insertion point in the hovered column
+		//     (before the hovered task, or at the end of the column). Purely a
+		//     visual affordance, so this asserts against the DOM, not the server.
+		results("6b. Drag ghost / drop indicator");
+		s.check("ghost: dragstart dispatched", await c.eval(dragTask("dragstart", "Beta")));
+		await sleep(80);
+		s.check("ghost: dragover Alpha 2 dispatched", await c.eval(dragTask("dragover", "Alpha 2")));
+		s.check(
+			"ghost appears before Alpha 2 in the same column",
+			await waitEval(c, `(() => {
+			const ghost=document.querySelector('[data-drop-ghost]'); if(!ghost) return false;
+			const alpha=${TASKS}.find(t=>t.textContent.includes("Alpha 2")); if(!alpha) return false;
+			const sameCol=alpha.closest('[data-column-id]')===ghost.closest('[data-column-id]');
+			const before=!!(ghost.compareDocumentPosition(alpha)&Node.DOCUMENT_POSITION_FOLLOWING);
+			return sameCol&&before;
+		})()`),
+		);
+		s.check("ghost: dragover Done column dispatched", await c.eval(dragColumn("dragover", "Done")));
+		s.check(
+			"ghost moves into the Done column (cross-column)",
+			await waitEval(c, `(() => {
+			const ghost=document.querySelector('[data-drop-ghost]'); if(!ghost) return false;
+			const doneCol=${COLS}.find(c=>c.querySelector('[data-column-name]')?.textContent.trim()==="Done");
+			return !!(doneCol&&doneCol.contains(ghost));
+		})()`),
+		);
+		await c.eval(dragTask("drop", "Alpha 2"));
+		await c.eval(dragTask("dragend", "Beta"));
+		await sleep(120);
+		s.check("ghost cleared after drop", await c.eval(`!document.querySelector('[data-drop-ghost]')`));
+		s.check(
+			"drag state cleared (source no longer dimmed)",
+			await waitEval(c, `(() => { const b=${TASKS}.find(t=>t.textContent.includes("Beta")); if(!b) return false; return getComputedStyle(b).opacity==="1"; })()`),
+		);
+
 		// 7. Delete a task via the UI
 		results("7. Delete task");
 		await c.eval(
